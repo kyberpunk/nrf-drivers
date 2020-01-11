@@ -26,6 +26,8 @@
  *  POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <stdlib.h>
+
 #include "hal/nrf_gpio.h"
 #include "nrf_delay.h"
 #include "driver_htu21d.h"
