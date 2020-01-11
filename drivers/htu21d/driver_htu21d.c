@@ -42,10 +42,8 @@
 #define HTU21D_READ_VALUE_TIMEOUT_MS 100
 #define HTU21D_POLLING_INTERVAL_MS 5
 
-static nrfx_err_t twi_init(nrfx_twim_t *twi, const htu21d_twi_config_t *config)
+static nrfx_err_t driver_htu21d_twi_init(nrfx_twim_t *twi, const htu21d_twi_config_t *config)
 {
-    nrfx_err_t error = NRFX_SUCCESS;
-
     const nrfx_twim_config_t twi_config = {
        .scl                = config->scl_pin,
        .sda                = config->sda_pin,
@@ -54,9 +52,7 @@ static nrfx_err_t twi_init(nrfx_twim_t *twi, const htu21d_twi_config_t *config)
        .hold_bus_uninit    = false
     };
 
-    RETURN_ON_ERROR(error = nrfx_twim_init(twi, &twi_config, NULL, NULL));
-    nrfx_twim_enable(twi);
-    return error;
+    return nrfx_twim_init(twi, &twi_config, NULL, NULL);
 }
 
 static float driver_htu21d_calculate_temp(uint16_t raw_temp)
@@ -139,11 +135,11 @@ nrfx_err_t driver_htu21d_init(driver_htu21d_t *htu21d, const htu21d_twi_config_t
     VERIFY_OR_RETURN(htu21d != NULL || htu21d->twi != NULL, NRFX_ERROR_INVALID_PARAM);
     if (config != NULL)
     {
-        RETURN_ON_ERROR(error = twi_init(htu21d->twi, config));
+        RETURN_ON_ERROR(error = driver_htu21d_twi_init(htu21d->twi, config));
         htu21d->twi_init = true;
     }
     // According to specification it is necessary to wait 15 ms
-    nrf_delay_ms(15);
+    nrfx_twim_enable(htu21d->twi);
     return error;
 }
 

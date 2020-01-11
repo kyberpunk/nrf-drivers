@@ -27,13 +27,14 @@
  */
 
 #include "hal/nrf_gpio.h"
+#include "nrf_delay.h"
 #include "driver_htu21d.h"
 
 #include "app_util_platform.h"
 #include "app_error.h"
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
-//#include "nrf_log_default_backends.h"
+#include "nrf_log_default_backends.h"
 
 // TWI instance
 static nrfx_twim_t twi = NRFX_TWIM_INSTANCE(0);
@@ -47,7 +48,7 @@ int main(int aArgc, char *aArgv[])
     float dew_point = 0;
 
     APP_ERROR_CHECK(NRF_LOG_INIT(NULL));
-//    NRF_LOG_DEFAULT_BACKENDS_INIT();
+    NRF_LOG_DEFAULT_BACKENDS_INIT();
 
     NRF_LOG_INFO("\r\nHTU21D sensor example started.");
     NRF_LOG_FLUSH();
@@ -58,6 +59,8 @@ int main(int aArgc, char *aArgv[])
         .sda_pin = NRF_GPIO_PIN_MAP(0, 19)
     };
     driver_htu21d_init(&htu21d, &twi_config);
+    // Wait 15 ms for idle state
+    nrf_delay_ms(15);
     // Reset HTU21D sensor after initialization
     driver_htu21d_soft_reset(&htu21d);
 

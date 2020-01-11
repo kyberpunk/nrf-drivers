@@ -38,9 +38,6 @@
 extern "C" {
 #endif
 
-#define HTU21D_ADDRESS 0x40
-#define HTU21D_DEFAULT_REGISTER_DATA 0x02
-
 /**
  * @defgroup nrf_drivers HTU21D
  * @{
@@ -48,6 +45,16 @@ extern "C" {
  * @brief   Driver for controlling HTU21D module with I2C interface for measuring
  * relative humidity and temperature. TWIM driver is used for communication.
  */
+
+/**
+ * @brief HTU21D device TWI address (7 bits).
+ */
+#define HTU21D_ADDRESS 0x40
+
+/**
+ * @brief Default user register value (byte).
+ */
+#define HTU21D_DEFAULT_REGISTER_DATA 0x02
 
 /**
  * @brief Enumeration defines all HTU21D commands with numeric value.
@@ -141,7 +148,7 @@ typedef struct
  */
 #define HTU21D_INSTANCE(twi_par)           \
 {                                          \
-    .twi = twi_par,                       \
+    .twi = twi_par,                        \
     .address = HTU21D_ADDRESS,             \
     .busy = false,                         \
     .twi_init = false                      \
@@ -152,8 +159,7 @@ typedef struct
  *
  * @note  Must be called before using the driver.
  * @note  Set config parameter to NULL if TWIM instance is already initialized in external code.
- *
- * @note  The function waits 15 ms after initialization since it is required according to specification.
+ * @note  Must wait at most 15 ms after initialization before the sensor switch to idle state waiting for next command.
  *
  * @param[in] htu21d  A pointer to HTU21D driver instance data to be initialized. Must be allocated in user code.
  * @param[in] config  A pointer to TWI configuration. If NULL then TWI instance will be used without initialization.
