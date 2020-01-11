@@ -33,7 +33,12 @@
 #include "app_error.h"
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
-#include "nrf_log_default_backends.h"
+//#include "nrf_log_default_backends.h"
+
+// TWI instance
+static nrfx_twim_t twi = NRFX_TWIM_INSTANCE(0);
+// HTU21D driver instance using twim 0
+static driver_htu21d_t htu21d = HTU21D_INSTANCE(&twi);
 
 int main(int aArgc, char *aArgv[])
 {
@@ -42,30 +47,30 @@ int main(int aArgc, char *aArgv[])
     float dew_point = 0;
 
     APP_ERROR_CHECK(NRF_LOG_INIT(NULL));
-    NRF_LOG_DEFAULT_BACKENDS_INIT();
+//    NRF_LOG_DEFAULT_BACKENDS_INIT();
 
     NRF_LOG_INFO("\r\nHTU21D sensor example started.");
     NRF_LOG_FLUSH();
 
-    // Intitalize HTU21D sensor driver
+    // Intitalize HTU21D sensor driver and TWI interface
     htu21d_twi_config_t twi_config = {
         .scl_pin = NRF_GPIO_PIN_MAP(0, 17),
         .sda_pin = NRF_GPIO_PIN_MAP(0, 19)
     };
-    htu21d_driver_init(&twi_config);
+    driver_htu21d_init(&htu21d, &twi_config);
     // Reset HTU21D sensor after initialization
-    htu21d_driver_soft_reset();
+    driver_htu21d_soft_reset(&htu21d);
 
     // Write HTU21D user register configuration
     htu21d_config_t config = HTU21D_DEFAULT_CONFIG;
     config.resolution = RESOLUTION_RH11_TEMP11;
     config.heater_enabled = true;
-    htu21d_driver_write_register(&config);
+    driver_htu21d_write_register(&htu21d, &config);
 
     // Read measurement values
-    htu21d_driver_get_temp_no_hold(&temp);
-    htu21d_driver_get_hum_no_hold(&hum);
-    dew_point = htu21d_driver_calc_dew_point(temp, hum);
+    driver_htu21d_get_temp_no_hold(&htu21d, &temp);
+    driver_htu21d_get_hum_no_hold(&htu21d, &hum);
+    dew_point = driver_htu21d_calc_dew_point(temp, hum);
     NRF_LOG_INFO("\r\nTemperature: %f, relative humidity: %f, dew point: %f.",
         temp, hum, dew_point);
     return 0;

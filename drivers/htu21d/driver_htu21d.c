@@ -29,11 +29,9 @@
 #include <math.h>
 #include <stdbool.h>
 
-#include "nrf_drv_twi.h"
 #include "nrf_delay.h"
 #include "hal/nrf_gpio.h"
 
-#include "config_htu21d.h"
 #include "driver_htu21d.h"
 
 /* Constants for calculations */
@@ -41,51 +39,37 @@
 #define B 1762.39
 #define C 235.66
 
-static const nrf_drv_twi_t htu21d_driver_twi = NRF_DRV_TWI_INSTANCE(HTU21D_TWI_INSTANCE_ID);
+#define HTU21D_READ_VALUE_TIMEOUT_MS 100
+#define HTU21D_POLLING_INTERVAL_MS 5
 
-static htu21d_error_t htu21d_driver_resolve_error(ret_code_t error)
+static nrfx_err_t twi_init(nrfx_twim_t *twi, const htu21d_twi_config_t *config)
 {
-    switch (error)
-    {
-    case NRFX_SUCCESS:
-        return HTU21D_ERROR_NONE;
-    case NRFX_ERROR_BUSY:
-        return HTU21D_ERROR_BUSY;
-    default:
-        return HTU21D_ERROR_FAIL;
-    }
-}
+    nrfx_err_t error = NRFX_SUCCESS;
 
-static htu21d_error_t twi_init(const htu21d_twi_config_t *config)
-{
-    ret_code_t err_code;
-
-    const nrf_drv_twi_config_t twi_config = {
+    const nrfx_twim_config_t twi_config = {
        .scl                = config->scl_pin,
        .sda                = config->sda_pin,
-       .frequency          = NRF_DRV_TWI_FREQ_100K,
+       .frequency          = NRF_TWIM_FREQ_100K,
        .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
-       .clear_bus_init     = false,
        .hold_bus_uninit    = false
     };
 
-    err_code = nrf_drv_twi_init(&htu21d_driver_twi, &twi_config, NULL, NULL);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
-    nrf_drv_twi_enable(&htu21d_driver_twi);
-    return HTU21D_ERROR_NONE;
+    RETURN_ON_ERROR(error = nrfx_twim_init(twi, &twi_config, NULL, NULL));
+    nrfx_twim_enable(twi);
+    return error;
 }
 
-static float htu21d_driver_calculate_temp(uint16_t raw_temp)
+static float driver_htu21d_calculate_temp(uint16_t raw_temp)
 {
     return (175.72 * raw_temp) / 65536.0 - 46.85;
 }
 
-static float htu21d_driver_calculate_hum(uint16_t raw_temp)
+static float driver_htu21d_calculate_hum(uint16_t raw_temp)
 {
     return (125.0 * raw_temp) / 65536.0 - 6.0;
 }
 
-static bool htu21d_driver_check_crc(uint8_t *received)
+static bool driver_htu21d_check_crc(uint8_t *received)
 {
     uint32_t remainder = ((uint32_t)received[0] << 8 | (uint32_t)received[1]) << 8;
     remainder |= received[2];
@@ -101,152 +85,177 @@ static bool htu21d_driver_check_crc(uint8_t *received)
     return remainder == 0;
 }
 
-static uint16_t htu21d_driver_get_raw_value(uint8_t *received)
+static uint16_t driver_htu21d_get_raw_value(uint8_t *received)
 {
     uint16_t value = (uint16_t)received[0] << 8 | (uint16_t)received[1];
     value &= 0xfffc; // Mask status bytes
     return value;
 }
 
-static ret_code_t htu21d_driver_send_command(uint8_t command)
+static nrfx_err_t driver_htu21d_send_command(driver_htu21d_t *htu21d, uint8_t command)
 {
-    nrf_drv_twi_xfer_desc_t desc = NRF_DRV_TWI_XFER_DESC_TX(HTU21D_ADDRESS, &command, 1);
-    return nrf_drv_twi_xfer(&htu21d_driver_twi, &desc, 0);
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(htu21d->address, &command, 1);
+    return nrfx_twim_xfer(htu21d->twi, &desc, 0);
 }
 
-static htu21d_error_t htu21d_driver_read_value_hold(uint16_t *value)
+static nrfx_err_t driver_htu21d_read_value_hold(driver_htu21d_t *htu21d, uint16_t *value)
 {
     uint8_t received[3] = {0};
+    nrfx_err_t error = NRFX_SUCCESS;
     // Request read, master is hold by slave until the measurement is complete
-    nrf_drv_twi_xfer_desc_t desc = NRF_DRV_TWI_XFER_DESC_RX(HTU21D_ADDRESS, received, 3);
-    ret_code_t err_code = nrf_drv_twi_xfer(&htu21d_driver_twi, &desc, 0);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_RX(htu21d->address, received, 3);
+    RETURN_ON_ERROR(error = nrfx_twim_xfer(htu21d->twi, &desc, 0));
 
-    if (!htu21d_driver_check_crc(received)) return HTU21D_ERROR_CRC;
-    *value = htu21d_driver_get_raw_value(received);
-    return HTU21D_ERROR_NONE;
+    if (!driver_htu21d_check_crc(received)) return NRF_DRIVERS_ERROR_CHECKSUM;
+    *value = driver_htu21d_get_raw_value(received);
+    return error;
 }
 
-static htu21d_error_t htu21d_driver_read_value_no_hold(uint16_t *value)
+static nrfx_err_t driver_htu21d_read_value_no_hold(driver_htu21d_t *htu21d, uint16_t *value)
 {
     uint8_t received[3] = {0};
-    nrf_drv_twi_xfer_desc_t desc = NRF_DRV_TWI_XFER_DESC_RX(HTU21D_ADDRESS, received, 3);
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_RX(htu21d->address, received, 3);
     uint32_t wait_time = 0;
-    ret_code_t err_code;
+    nrfx_err_t error = NRFX_SUCCESS;
     // Poll for measurement until timeout is reached or sensor stops sending NACK
     while (wait_time <= HTU21D_READ_VALUE_TIMEOUT_MS
-        && (err_code = nrf_drv_twi_xfer(&htu21d_driver_twi, &desc, 0)) == NRFX_ERROR_DRV_TWI_ERR_ANACK)
+        && (error = nrfx_twim_xfer(htu21d->twi, &desc, 0)) == NRFX_ERROR_DRV_TWI_ERR_ANACK)
     {
         nrf_delay_ms(HTU21D_POLLING_INTERVAL_MS);
         wait_time += HTU21D_POLLING_INTERVAL_MS;
     }
     // Check error states
-    if (wait_time > HTU21D_READ_VALUE_TIMEOUT_MS) return HTU21D_ERROR_TIMEOUT;
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
+    if (wait_time > HTU21D_READ_VALUE_TIMEOUT_MS) return NRF_DRIVERS_ERROR_TIMEOUT;
+    RETURN_ON_ERROR(error);
 
-    if (!htu21d_driver_check_crc(received)) return HTU21D_ERROR_CRC;
-    *value = htu21d_driver_get_raw_value(received);
-    return HTU21D_ERROR_NONE;
-}
-
-htu21d_error_t htu21d_driver_init(const htu21d_twi_config_t *config)
-{
-    if (config == NULL) return HTU21D_ERROR_ARGS;
-    htu21d_error_t error = twi_init(config);
-    if (error == HTU21D_ERROR_NONE)
-    {
-        // According to specification it is necessary to wait 15 ms
-        nrf_delay_ms(15);
-    }
+    if (!driver_htu21d_check_crc(received)) return NRF_DRIVERS_ERROR_CHECKSUM;
+    *value = driver_htu21d_get_raw_value(received);
     return error;
 }
 
-void htu21d_driver_uninit(void)
+nrfx_err_t driver_htu21d_init(driver_htu21d_t *htu21d, const htu21d_twi_config_t *config)
 {
-    nrf_drv_twi_disable(&htu21d_driver_twi);
-    nrf_drv_twi_uninit(&htu21d_driver_twi);
+    nrfx_err_t error = NRFX_SUCCESS;
+    VERIFY_OR_RETURN(htu21d != NULL || htu21d->twi != NULL, NRFX_ERROR_INVALID_PARAM);
+    if (config != NULL)
+    {
+        RETURN_ON_ERROR(error = twi_init(htu21d->twi, config));
+        htu21d->twi_init = true;
+    }
+    // According to specification it is necessary to wait 15 ms
+    nrf_delay_ms(15);
+    return error;
 }
 
-htu21d_error_t htu21d_driver_get_temp_hold(float *value)
+void driver_htu21d_uninit(driver_htu21d_t *htu21d)
 {
-    uint16_t raw_value = 0;
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_TRIGGER_TEMP_MEASURE_HOLD);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
-
-    htu21d_error_t error = htu21d_driver_read_value_hold(&raw_value);
-    if (error != HTU21D_ERROR_NONE) return error;
-
-    *value = htu21d_driver_calculate_temp(raw_value);
-    return HTU21D_ERROR_NONE;
+    if (htu21d->twi_init)
+    {
+        nrfx_twim_disable(htu21d->twi);
+        nrfx_twim_uninit(htu21d->twi);
+    }
 }
 
-htu21d_error_t htu21d_driver_get_temp_no_hold(float *value)
-{
-    uint16_t raw_value = 0;
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_TRIGGER_TEMP_MEASURE_NOHOLD);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
-
-    htu21d_error_t error = htu21d_driver_read_value_no_hold(&raw_value);
-    if (error != HTU21D_ERROR_NONE) return error;
-
-    *value = htu21d_driver_calculate_temp(raw_value);
-    return HTU21D_ERROR_NONE;
-}
-
-htu21d_error_t htu21d_driver_get_hum_hold(float *value)
+nrfx_err_t driver_htu21d_get_temp_hold(driver_htu21d_t *htu21d, float *value)
 {
     uint16_t raw_value = 0;
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_TRIGGER_HUM_MEASURE_HOLD);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
+    nrfx_err_t error = NRFX_SUCCESS;
 
-    htu21d_error_t error = htu21d_driver_read_value_hold(&raw_value);
-    if (error != HTU21D_ERROR_NONE) return error;
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    EXIT_ON_ERROR(error = driver_htu21d_send_command(htu21d, HTU21D_TRIGGER_TEMP_MEASURE_HOLD));
+    EXIT_ON_ERROR(error = driver_htu21d_read_value_hold(htu21d, &raw_value));
+    *value = driver_htu21d_calculate_temp(raw_value);
 
-    *value = htu21d_driver_calculate_hum(raw_value);
-    return HTU21D_ERROR_NONE;
+exit:
+    htu21d->busy = false;
+    return error;
 }
 
-htu21d_error_t htu21d_driver_get_hum_no_hold(float *value)
+nrfx_err_t driver_htu21d_get_temp_no_hold(driver_htu21d_t *htu21d, float *value)
 {
     uint16_t raw_value = 0;
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_TRIGGER_HUM_MEASURE_NOHOLD);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
+    nrfx_err_t error = NRFX_SUCCESS;
 
-    htu21d_error_t error = htu21d_driver_read_value_no_hold(&raw_value);
-    if (error != HTU21D_ERROR_NONE) return error;
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    EXIT_ON_ERROR(error = driver_htu21d_send_command(htu21d, HTU21D_TRIGGER_TEMP_MEASURE_NOHOLD));
+    EXIT_ON_ERROR(error = driver_htu21d_read_value_no_hold(htu21d, &raw_value));
+    *value = driver_htu21d_calculate_temp(raw_value);
 
-    *value = htu21d_driver_calculate_hum(raw_value);
-    return HTU21D_ERROR_NONE;
+exit:
+    htu21d->busy = false;
+    return error;
 }
 
-static htu21d_error_t htu21d_driver_read_register_data(uint8_t *register_data)
+nrfx_err_t driver_htu21d_get_hum_hold(driver_htu21d_t *htu21d, float *value)
 {
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_READ_USER_REG);
-    if (err_code != NRFX_SUCCESS) return htu21d_driver_resolve_error(err_code);
-    nrf_drv_twi_xfer_desc_t desc = NRF_DRV_TWI_XFER_DESC_RX(HTU21D_ADDRESS, register_data, 1);
-    err_code = nrf_drv_twi_xfer(&htu21d_driver_twi, &desc, 0);
-    return htu21d_driver_resolve_error(err_code);
+    uint16_t raw_value = 0;
+    nrfx_err_t error = NRFX_SUCCESS;
+
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    EXIT_ON_ERROR(error = driver_htu21d_send_command(htu21d, HTU21D_TRIGGER_HUM_MEASURE_HOLD));
+    EXIT_ON_ERROR(error = driver_htu21d_read_value_hold(htu21d, &raw_value));
+    *value = driver_htu21d_calculate_hum(raw_value);
+
+exit:
+    htu21d->busy = false;
+    return error;
 }
 
-htu21d_error_t htu21d_driver_read_register(htu21d_config_t *config)
+nrfx_err_t driver_htu21d_get_hum_no_hold(driver_htu21d_t *htu21d, float *value)
+{
+    uint16_t raw_value = 0;
+    nrfx_err_t error = NRFX_SUCCESS;
+
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    EXIT_ON_ERROR(error = driver_htu21d_send_command(htu21d, HTU21D_TRIGGER_HUM_MEASURE_NOHOLD));
+    EXIT_ON_ERROR(error = driver_htu21d_read_value_no_hold(htu21d, &raw_value));
+    *value = driver_htu21d_calculate_hum(raw_value);
+
+exit:
+    htu21d->busy = false;
+    return error;
+}
+
+static nrfx_err_t driver_htu21d_read_register_data(driver_htu21d_t *htu21d, uint8_t *register_data)
+{
+    nrfx_err_t error = NRFX_SUCCESS;
+    RETURN_ON_ERROR(error = driver_htu21d_send_command(htu21d, HTU21D_READ_USER_REG));
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_RX(htu21d->address, register_data, 1);
+    error = nrfx_twim_xfer(htu21d->twi, &desc, 0);
+    return error;
+}
+
+nrfx_err_t driver_htu21d_read_register(driver_htu21d_t *htu21d, htu21d_config_t *config)
 {
     uint8_t register_data = 0;
-    htu21d_error_t error = htu21d_driver_read_register_data(&register_data);
-    if (error != HTU21D_ERROR_NONE) return error;
+    nrfx_err_t error = NRFX_SUCCESS;
+
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    error = driver_htu21d_read_register_data(htu21d, &register_data);
+    htu21d->busy = false;
+    RETURN_ON_ERROR(error);
 
     config->resolution = USER_REGISTER_RESOLUTION_MASK & register_data;
     config->end_of_battery = (USER_REGISTER_END_OF_BATTERY_MASK & register_data) != 0;
     config->heater_enabled = (USER_REGISTER_HEATER_ENABLED_MASK & register_data) != 0;
     config->disable_otp_reload = (USER_REGISTER_DISABLE_OTP_RELOAD_MASK & register_data) != 0;
-    return HTU21D_ERROR_NONE;
+    return error;
 }
 
-htu21d_error_t htu21d_driver_write_register(const htu21d_config_t *config)
+nrfx_err_t driver_htu21d_write_register(driver_htu21d_t *htu21d, const htu21d_config_t *config)
 {
     uint8_t register_data = 0;
+    nrfx_err_t error = NRFX_SUCCESS;
+
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
     // Read current register data, reserved bits must not be changed
-    ret_code_t err_code = htu21d_driver_read_register_data(&register_data);
-    if (err_code != HTU21D_ERROR_NONE) return htu21d_driver_resolve_error(err_code);
+    EXIT_ON_ERROR(error = driver_htu21d_read_register_data(htu21d, &register_data));
 
     // Set register flags
     register_data |= USER_REGISTER_RESOLUTION_MASK & config->resolution;
@@ -258,18 +267,25 @@ htu21d_error_t htu21d_driver_write_register(const htu21d_config_t *config)
     uint8_t data[2] = {0};
     data[0] = HTU21D_WRITE_USER_REG;
     data[1] = register_data;
-    nrf_drv_twi_xfer_desc_t desc = NRF_DRV_TWI_XFER_DESC_TX(HTU21D_ADDRESS, data, 2);
-    err_code = nrf_drv_twi_xfer(&htu21d_driver_twi, &desc, 0);
-    return htu21d_driver_resolve_error(err_code);
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(htu21d->address, data, 2);
+    error = nrfx_twim_xfer(htu21d->twi, &desc, 0);
+
+exit:
+    htu21d->busy = false;
+    return error;
 }
 
-htu21d_error_t htu21d_driver_soft_reset(void)
+nrfx_err_t driver_htu21d_soft_reset(driver_htu21d_t *htu21d)
 {
-    ret_code_t err_code = htu21d_driver_send_command(HTU21D_SOFT_RESET);
-    return htu21d_driver_resolve_error(err_code);
+    nrfx_err_t error = NRFX_SUCCESS;
+    VERIFY_OR_RETURN(!htu21d->busy, NRF_DRIVERS_ERROR_TIMEOUT);
+    htu21d->busy = true;
+    error = driver_htu21d_send_command(htu21d, HTU21D_SOFT_RESET);
+    htu21d->busy = false;
+    return error;
 }
 
-float htu21d_driver_calc_dew_point(float temp, float hum)
+float driver_htu21d_calc_dew_point(float temp, float hum)
 {
     // The equation for calculating dew point is defined in HTU21D specification.
     float pp = powf(10, A - (B / (temp + C)));
