@@ -27,11 +27,8 @@
  */
 
 #include <math.h>
-#include <stdbool.h>
 
 #include "nrf_delay.h"
-#include "hal/nrf_gpio.h"
-
 #include "driver_htu21d.h"
 
 /* Constants for calculations */
@@ -47,7 +44,7 @@ static nrfx_err_t driver_htu21d_twi_init(nrfx_twim_t *twi, const htu21d_twi_conf
     const nrfx_twim_config_t twi_config = {
        .scl                = config->scl_pin,
        .sda                = config->sda_pin,
-       .frequency          = NRF_TWIM_FREQ_100K,
+       .frequency          = NRF_TWIM_FREQ_250K,
        .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
        .hold_bus_uninit    = false
     };

@@ -159,6 +159,7 @@ typedef struct
  *
  * @note  Must be called before using the driver.
  * @note  Set config parameter to NULL if TWIM instance is already initialized in external code.
+ * @note  TWI interface is initialized to 250 kbps speed by default.
  * @note  Must wait at most 15 ms after initialization before the sensor switch to idle state waiting for next command.
  *
  * @param[in] htu21d  A pointer to HTU21D driver instance data to be initialized. Must be allocated in user code.
