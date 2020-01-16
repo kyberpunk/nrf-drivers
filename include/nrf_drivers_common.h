@@ -46,16 +46,17 @@ extern "C" {
 
 /* @defgroup NRF Drivers Error Codes
  * @{ */
-#define NRF_DRIVERS_ERROR_CHECKSUM (NRF_DRIVERS_ERROR_BASE + 1)
-#define NRF_DRIVERS_ERROR_TIMEOUT  (NRF_DRIVERS_ERROR_BASE + 2)
-#define NRF_DRIVERS_ERROR_BUSY     (NRF_DRIVERS_ERROR_BASE + 3)
+#define NRF_DRIVERS_ERROR_CHECKSUM    (NRF_DRIVERS_ERROR_BASE + 1)
+#define NRF_DRIVERS_ERROR_TIMEOUT     (NRF_DRIVERS_ERROR_BASE + 2)
+#define NRF_DRIVERS_ERROR_BUSY        (NRF_DRIVERS_ERROR_BASE + 3)
+#define NRF_DRIVERS_ERROR_INV_DATA    (NRF_DRIVERS_ERROR_BASE + 4)
 /** @} */
 
 /* @defgroup Error Handling Macros
  * @{ */
 
 /**
- * This macro check if the error code is success. If not then return is called with error code.
+ * This macro checks if the error code is success. If not then return is called with error code.
  * Should be used only in functions with error code return type.
  *
  * @param[in]  error     An error code to be evaluated against NRFX_SUCCESS.
@@ -71,7 +72,7 @@ extern "C" {
     } while (false)
 
 /**
- * This macro check if the error code is success. If not then goto exit label is called.
+ * This macro checks if the error code is success. If not then goto exit label is called.
  *
  * @param[in]  error     An error code to be evaluated against NRFX_SUCCESS.
  *
@@ -86,7 +87,7 @@ extern "C" {
     } while (false)
 
 /**
- * This macro check condition and return error if it is false. If condition result is true
+ * This macro checks condition and return error if it is false. If condition result is true
  * then function execution continues. Should be used only in functions with error code return type.
  *
  * @param[in]  condition  Condition to be fulfilled.
@@ -100,6 +101,24 @@ extern "C" {
         {                                    \
             return error;                    \
         }                                    \
+    } while (false)
+
+/**
+ * This macro checks for the specified condition, which is expected to commonly be true, and both executes @a ... and
+ * branches to the local label 'exit' if the condition is false.
+ *
+ * @param[in]  condition  A Boolean expression to be evaluated.
+ * @param[in]  ...         An expression or block to execute when the assertion fails.
+ *
+ */
+#define VERIFY_OR_EXIT(condition, ...) \
+    do                                 \
+    {                                  \
+        if (!(condition))              \
+        {                              \
+            __VA_ARGS__;               \
+            goto exit;                 \
+        }                              \
     } while (false)
 
 /** @} */
