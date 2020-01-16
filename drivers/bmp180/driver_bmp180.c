@@ -61,13 +61,13 @@ static nrfx_err_t driver_bmp180_send_reg_addr(driver_bmp180_t *bmp180, bmp180_re
 static nrfx_err_t driver_bmp180_read_ushort(driver_bmp180_t *bmp180, bmp180_register_t address, uint16_t *data)
 {
     nrfx_err_t error = NRFX_SUCCESS;
-    uint16_t received = 0;
+    uint8_t received[2];
     // Set register address for read
     RETURN_ON_ERROR(error = driver_bmp180_send_reg_addr(bmp180, address));
     // Read 2 bytes
-    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_RX(bmp180->address, (uint8_t*)&received, 2);
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_RX(bmp180->address, received, 2);
     RETURN_ON_ERROR(error = nrfx_twim_xfer(bmp180->twi, &desc, 0));
-    *data = received;
+    *data = (((uint16_t)received[0]) << 8) + ((uint16_t)received[1]);
     return error;
 }
 
@@ -84,11 +84,20 @@ static nrfx_err_t driver_bmp180_read_ubyte(driver_bmp180_t *bmp180, bmp180_regis
     return error;
 }
 
-static int64_t driver_bmp180_calc_b5(driver_bmp180_t *bmp180, int32_t utemp)
+static nrfx_err_t driver_bmp180_write_ubyte(driver_bmp180_t *bmp180, bmp180_register_t address, uint8_t value)
+{
+    uint8_t data[2];
+    data[0] = address;
+    data[1] = value;
+    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(bmp180->address, data, 2);
+    return nrfx_twim_xfer(bmp180->twi, &desc, 0);
+}
+
+static int32_t driver_bmp180_calc_b5(driver_bmp180_t *bmp180, int32_t utemp)
 {
     bmp180_cal_t *cal = &bmp180->calibrations;
-    int64_t x1 = ((((int64_t)utemp) - cal->ac6) * cal->ac5) >> 15;
-    int64_t x2 = (((int64_t)cal->mc) << 11) / (x1 + cal->md);
+    int32_t x1 = ((utemp - cal->ac6) * cal->ac5) >> 15;
+    int32_t x2 = (((int32_t)cal->mc) << 11) / (x1 + cal->md);
     return x1 + x2;
 }
 
@@ -97,7 +106,7 @@ static int64_t driver_bmp180_calc_b5(driver_bmp180_t *bmp180, int32_t utemp)
  */
 static int32_t driver_bmp180_calc_true_temp(driver_bmp180_t *bmp180, int32_t temp_raw)
 {
-    int64_t b5 = driver_bmp180_calc_b5(bmp180, temp_raw);
+    int32_t b5 = driver_bmp180_calc_b5(bmp180, temp_raw);
     return (int32_t)((b5 + 8) >> 4);
 }
 
@@ -111,24 +120,24 @@ static bmp180_output_t driver_bmp180_calc_true_press(driver_bmp180_t *bmp180, in
 
     // Calculate true temperature
     int32_t b5 = driver_bmp180_calc_b5(bmp180, temp_raw);
-    output.temp = (int32_t)((b5 + 8) >> 4);
+    output.temp = (b5 + 8) >> 4;
 
     // Calculate true pressure
-    int64_t b6 = b5 - 4000;
-    int64_t x1 = (((int64_t)cal->b2) * ((b6 * b6) >> 12)) >> 11;
-    int64_t x2 = (((int64_t)cal->ac2) * b6) >> 11;
-    int64_t x3 = x1 + x2;
-    int64_t b3 = (((((int64_t)cal->ac1) * 4 + x3) << bmp180->mode) + 2) >> 2;
-    x1 = (((int64_t)cal->ac3) * b6) >> 13;
-    x2 = (((int64_t)cal->b1) * ((b6 * b6) >> 12)) >> 16;
+    int32_t b6 = b5 - 4000;
+    int32_t x1 = (((int32_t)cal->b2) * ((b6 * b6) >> 12)) >> 11;
+    int32_t x2 = (((int32_t)cal->ac2) * b6) >> 11;
+    int32_t x3 = x1 + x2;
+    int32_t b3 = (((((int32_t)cal->ac1) * 4 + x3) << bmp180->mode) + 2) >> 2;
+    x1 = (((int32_t)cal->ac3) * b6) >> 13;
+    x2 = (((int32_t)cal->b1) * ((b6 * b6) >> 12)) >> 16;
     x3 = ((x1 + x2) + 2) >> 2;
-    uint64_t b4 = (((uint64_t)cal->ac4) * (uint64_t)(x3 + 32768)) >> 15;
-    uint64_t b7 = (((uint64_t)press_raw) - b3) * (50000 >> bmp180->mode);
-    int64_t p = 0;
+    uint32_t b4 = (((uint32_t)cal->ac4) * (uint32_t)(x3 + 32768)) >> 15;
+    uint32_t b7 = (((uint32_t)press_raw) - b3) * (50000 >> bmp180->mode);
+    int32_t p = 0;
     if (b7 < 0x80000000)
-        p = (int64_t)((b7 * 2) / b4);
+        p = (int32_t)((b7 * 2) / b4);
     else
-        p = (int64_t)((b7 / b4) * 2);
+        p = (int32_t)((b7 / b4) * 2);
     x1 = (p >> 8) * (p >> 8);
     x1 = (x1 * 3038) >> 16;
     x2 = (-7357 * p) >> 16;
@@ -141,10 +150,7 @@ static nrfx_err_t driver_bmp180_read_temp_raw(driver_bmp180_t *bmp180, int32_t *
     uint16_t received = 0;
     nrfx_err_t error = NRF_SUCCESS;
     // Write read temperature command
-    uint8_t cmd = BMP180_CMD_TEMP;
-    RETURN_ON_ERROR(error = driver_bmp180_send_reg_addr(bmp180, BMP180_REGISTER_CTRL_MEAS));
-    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(bmp180->address, &cmd, 1);
-    RETURN_ON_ERROR(error = nrfx_twim_xfer(bmp180->twi, &desc, 0));
+    RETURN_ON_ERROR(error = driver_bmp180_write_ubyte(bmp180, BMP180_REGISTER_CTRL_MEAS, BMP180_CMD_TEMP));
     // Wait at least 4.5 ms
     nrf_delay_ms(5);
     // Read output
@@ -156,15 +162,14 @@ static nrfx_err_t driver_bmp180_read_temp_raw(driver_bmp180_t *bmp180, int32_t *
 static nrfx_err_t driver_bmp180_read_press_raw(driver_bmp180_t *bmp180, int32_t *press_raw)
 {
     nrfx_err_t error = NRF_SUCCESS;
-    uint8_t received[3] = {0};
+    uint16_t msb = 0;
+    uint8_t xlsb;
     uint8_t cmd = 0;
 
     // Write read pressure command
-    RETURN_ON_ERROR(error = driver_bmp180_send_reg_addr(bmp180, BMP180_REGISTER_CTRL_MEAS));
     // Choose oss mode
     cmd = BMP180_CMD_PRESS | ((bmp180->mode << 6) & BMP180_CTRL_MEAS_OSS_MASK);
-    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(bmp180->address, &cmd, 1);
-    RETURN_ON_ERROR(error = nrfx_twim_xfer(bmp180->twi, &desc, 0));
+    RETURN_ON_ERROR(error = driver_bmp180_write_ubyte(bmp180, BMP180_REGISTER_CTRL_MEAS, cmd));
 
     // Wait for some time depending on OSS settings
     switch (bmp180->mode)
@@ -184,9 +189,9 @@ static nrfx_err_t driver_bmp180_read_press_raw(driver_bmp180_t *bmp180, int32_t 
     }
 
     // Read output
-    RETURN_ON_ERROR(error = driver_bmp180_read_ushort(bmp180, BMP180_REGISTER_OUT_MSB, (uint16_t*)received));
-    RETURN_ON_ERROR(error = driver_bmp180_read_ubyte(bmp180, BMP180_REGISTER_OUT_XLSB, &received[2]));
-    *press_raw = (((int32_t)received[0]) << 16) + (((int32_t)received[1]) << 8) + ((int32_t)received[1]);
+    RETURN_ON_ERROR(error = driver_bmp180_read_ushort(bmp180, BMP180_REGISTER_OUT_MSB, &msb));
+    RETURN_ON_ERROR(error = driver_bmp180_read_ubyte(bmp180, BMP180_REGISTER_OUT_XLSB, &xlsb));
+    *press_raw = (((int32_t)msb) << 8) + xlsb;
     *press_raw >>= (8 - bmp180->mode);
     return error;
 }
@@ -267,14 +272,9 @@ exit:
 nrfx_err_t driver_bmp180_soft_reset(driver_bmp180_t *bmp180)
 {
     nrfx_err_t error = NRFX_SUCCESS;
-    uint8_t cmd = BMP180_CMD_SOFT_RESET;
     VERIFY_OR_RETURN(!bmp180->busy, NRF_DRIVERS_ERROR_BUSY);
     bmp180->busy = true;
-    EXIT_ON_ERROR(error = driver_bmp180_send_reg_addr(bmp180, BMP180_REGISTER_SOFT_RESET));
-    nrfx_twim_xfer_desc_t desc = NRFX_TWIM_XFER_DESC_TX(bmp180->address, &cmd, 1);
-    error = nrfx_twim_xfer(bmp180->twi, &desc, 0);
-
-exit:
+    error = driver_bmp180_write_ubyte(bmp180, BMP180_REGISTER_SOFT_RESET, BMP180_CMD_SOFT_RESET);
     bmp180->busy = false;
     return error;
 }
@@ -319,7 +319,7 @@ nrfx_err_t driver_bmp180_read_press(driver_bmp180_t *bmp180, float *temp, float 
     EXIT_ON_ERROR(error = driver_bmp180_read_temp_raw(bmp180, &temp_raw));
     EXIT_ON_ERROR(error = driver_bmp180_read_press_raw(bmp180, &press_raw));
     output = driver_bmp180_calc_true_press(bmp180, temp_raw, press_raw);
-    *temp = ((float)output.temp) / 10;
+    *temp = ((float)output.temp) / 10.0;
     *press = (float)output.press;
 
 exit:
