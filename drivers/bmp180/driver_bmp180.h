@@ -164,19 +164,19 @@ typedef struct
 #define BMP180_USE_DEFAULT_CALIBRATIONS 0
 #endif
 
-#define BMP180_DEFAULT_CALIBRATIONS        \
-{                                          \
-    ac1 = 408,                             \
-    ac2 = -72,                             \
-    ac3 = -14383,                          \
-    ac4 = 32741,                           \
-    ac5 = 32757,                           \
-    ac6 = 23153,                           \
-    b1 = 6190,                             \
-    b2 = 4,                                \
-    mb = -32768,                           \
-    mc = -8711,                            \
-    md = 2868,                             \
+#define BMP180_DEFAULT_CALIBRATIONS         \
+{                                           \
+    .ac1 = 408,                             \
+    .ac2 = -72,                             \
+    .ac3 = -14383,                          \
+    .ac4 = 32741,                           \
+    .ac5 = 32757,                           \
+    .ac6 = 23153,                           \
+    .b1 = 6190,                             \
+    .b2 = 4,                                \
+    .mb = -32768,                           \
+    .mc = -8711,                            \
+    .md = 2868,                             \
 }
 
 /**
