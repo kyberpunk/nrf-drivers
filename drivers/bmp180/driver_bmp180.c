@@ -232,11 +232,13 @@ nrfx_err_t driver_bmp180_start(driver_bmp180_t *bmp180)
     nrfx_err_t error = NRFX_SUCCESS;
     uint8_t chip_id = 0;
     bmp180_cal_t *cal = &bmp180->calibrations;
+    VERIFY_OR_RETURN(!bmp180->busy, NRF_DRIVERS_ERROR_BUSY);
     bmp180->busy = true;
     // Check readout of chip-id and compare with expected value (0x55)
     EXIT_ON_ERROR(error = driver_bmp180_read_ubyte(bmp180, BMP180_REGISTER_ID, &chip_id));
     VERIFY_OR_EXIT(chip_id == BMP180_DEFAULT_CHIP_ID, error = NRF_DRIVERS_ERROR_INV_DATA);
 
+#if !(BMP180_USE_DEFAULT_CALIBRATIONS)
     // Readout calibration data
     EXIT_ON_ERROR(error = driver_bmp180_read_ushort(bmp180, BMP180_REGISTER_CAL_AC1_MSB, (uint16_t*)&cal->ac1));
     EXIT_ON_ERROR(error = driver_bmp180_read_ushort(bmp180, BMP180_REGISTER_CAL_AC2_MSB, (uint16_t*)&cal->ac2));
@@ -261,6 +263,7 @@ nrfx_err_t driver_bmp180_start(driver_bmp180_t *bmp180)
     EXIT_ON_ERROR(error = driver_bmp180_verify_calibration((uint16_t)cal->mb));
     EXIT_ON_ERROR(error = driver_bmp180_verify_calibration((uint16_t)cal->mc));
     EXIT_ON_ERROR(error = driver_bmp180_verify_calibration((uint16_t)cal->md));
+#endif
 
     bmp180->started = true;
 
@@ -286,7 +289,7 @@ nrfx_err_t driver_bmp180_set_mode(driver_bmp180_t *bmp180, bmp180_mode_t mode)
     return NRFX_SUCCESS;
 }
 
-nrfx_err_t driver_bmp180_read_temp(driver_bmp180_t *bmp180, float *temp)
+nrfx_err_t driver_bmp180_get_temp(driver_bmp180_t *bmp180, float *temp)
 {
     nrfx_err_t error = NRFX_SUCCESS;
     int32_t temp_raw = 0;
@@ -305,7 +308,7 @@ exit:
     return error;
 }
 
-nrfx_err_t driver_bmp180_read_press(driver_bmp180_t *bmp180, float *temp, float *press)
+nrfx_err_t driver_bmp180_get_press(driver_bmp180_t *bmp180, float *temp, float *press)
 {
     nrfx_err_t error = NRFX_SUCCESS;
     int32_t temp_raw = 0;
