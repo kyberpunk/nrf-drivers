@@ -3,3 +3,4 @@ This repository contains drivers for various IoT peripheral modules developed fo
 
 ## Drivers
 * [Driver for HTU21D temperature and humidity sensor](drivers/htu21d)
+* [Driver for BMP180 barometric pressure sensor](drivers/bmp180)
